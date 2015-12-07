@@ -34,6 +34,8 @@ class WikiProjectMembers:
              'where page_namespace = 2 and tl_namespace = 10 '
              'and tl_title = "WikiProjectCard";')
 
+        # Aliases for wikiprojects which have been renamed
+        aliases = {}
         # Generate list of WikiProjects and members through the WikiProjectCard system
         members = {}
         for row in self.wptools.query('wiki', q, None):
@@ -42,11 +44,26 @@ class WikiProjectMembers:
             title = "User: " + title
             username = components[0]
             wikiproject = '/'.join(components[2:])  # In case the WikiProject name somehow has a slash in it
+            card_project = wikiproject
 
-            if wikiproject in members:
-                members[wikiproject].append(username)
-            else:
-                members[wikiproject] = [username]
+            # Determine actual wikiproject in case there have been movements
+            # TODO: Write one general function (not only testing /Members) which finds aliases
+            if wikiproject in aliases:
+                wikiproject = aliases[wikiproject]
+            elif wikiproject not in members:
+                page = pywikibot.Page(bot, "Wikipedia:" + wikiproject + "/Members")
+                try:
+                    page = page.getRedirectTarget()
+                except pywikibot.exceptions.IsNotRedirectPage:
+                    pass
+                else:
+                    wikiproject = page.title(withNamespace=False)
+                    assert wikiproject.endswith("/Members")
+                    wikiproject = wikiproject[:-len("/Members")]
+                    aliases[card_project] = wikiproject
+                members[wikiproject] = []
+
+            members[wikiproject].append((username, card_project))
 
         members = {wikiproject:sorted(memberlist) for wikiproject, memberlist in members.items()}
 
@@ -57,8 +74,8 @@ class WikiProjectMembers:
             active = "<noinclude>" + return_to_wikiproject + "\n\n<div style='padding-top:1.5em; padding-bottom:2em;'>Our WikiProject members are below. Those who have not edited Wikipedia in over a month are moved to the [[Wikipedia:{0}/Members/Inactive|inactive members list]].</div>\n\n</noinclude>".format(wikiproject) + lua_garbage
             inactive = "<noinclude>" + return_to_wikiproject + "\n\n<div style='padding-top:1.5em; padding-bottom:2em;'>These are our members who have not edited in a while. Once they edit again, they will be moved back to the [[Wikipedia:{0}/Members|active members list]].</div>\n\n</noinclude>".format(wikiproject) + lua_garbage
 
-            for member in members[wikiproject]:
-                addition = "{{User:" + member + "/WikiProjectCards/" + wikiproject + "<includeonly>|mode=compact</includeonly>}}|"
+            for member, card_project in members[wikiproject]:
+                addition = "{{User:" + member + "/WikiProjectCards/" + card_project + "<includeonly>|mode=compact</includeonly>}}|"
                 if self.wpn.active_user(member):
                     active += addition
                 else:
@@ -79,8 +96,7 @@ class WikiProjectMembers:
                     if t.name[:5] == "User:":  # differentiating between {{Clickable button 2}} et. al. and the WikiProjectCards
                         oldnames.append(t.name.split("/")[0][5:])  # i.e. grab username from template
 
-            newnames = list(set(members[wikiproject]) - set(oldnames))
-            newnames.sort()
+            newnames = sorted(set(member[0] for member in members[wikiproject]) - set(oldnames))
             print(newnames)
 
             # Anyone in the *newnames* set is a new user. Queue the notification!
